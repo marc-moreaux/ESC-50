@@ -26,7 +26,7 @@ def change_audio_rate(audio_fname, directory, new_audio_rate):
     if not os.path.isfile(wav_path_dest):
         if not os.path.isdir(new_directory):
             os.mkdir(new_directory)
-        cmd = 'ffmpeg -i {} -ar {} -ac 1 {}'.format(
+        cmd = 'ffmpeg -i {} -ar {} -b:a 16k -ac 1 {}'.format(
             wav_path_orig,
             new_audio_rate,
             wav_path_dest)
@@ -75,9 +75,30 @@ class ESC50(object):
                 wav_data = self.pre_process(wav_data)
                 yield wav_data, self.df.target[idx]
 
-    def pre_process(self, audio):
+    def pre_process(self,
+                    audio,
+                    mean_substraction=True,
+                    amplitide_threshold=0.1):
         """Apply desired pre_processing to the input
+
+        Parameters
+        ----------
+        amplitude_threshold : float
+            Filters out begining and tail of audio signal with amplitude
+            below <amplitude_threshold> of audio.max()
         """
+        a = audio
+        if amplitide_threshold > 0:
+            # Sub-optimal :/
+            mask = a.abs() < amplitide_threshold * a.abs().max()
+            mask_indices = np.argwhere(mask is True)
+            start = mask_indices[0]
+            end = mask_indices[-1]
+            a = a[start: end]
+
+        if mean_substraction is True:
+            a -= a.mean()
+
         return audio
 
 
