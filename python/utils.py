@@ -77,8 +77,12 @@ class ESC50(object):
 
     def pre_process(self,
                     audio,
-                    mean_substraction=True,
-                    amplitide_threshold=0.1):
+                    pad=0,
+                    random_crop=False,
+                    normalize=False,
+                    random_gain=0
+                    random_scale=0
+                    ):
         """Apply desired pre_processing to the input
 
         Parameters
@@ -87,21 +91,13 @@ class ESC50(object):
             Filters out begining and tail of audio signal with amplitude
             below <amplitude_threshold> of audio.max()
         """
-        a = audio
-        if amplitide_threshold > 0:
-            # Sub-optimal :/
-            mask = a.abs() < amplitide_threshold * a.abs().max()
-            mask_indices = np.argwhere(mask is True)
-            start = mask_indices[0]
-            end = mask_indices[-1]
-            a = a[start: end]
-
-        if mean_substraction is True:
-            a -= a.mean()
+        preprocess_funcs = []
+        for f in self.preprocess_funcs:
+            audio = f(audio)
 
         return audio
 
 
 # Test
-# train = ESC50(folds=[1,2,3], audio_rate=16000)
-# train.data_gen.next()
+train = ESC50(folds=[1,2,3], audio_rate=16000)
+next(train.data_gen)
