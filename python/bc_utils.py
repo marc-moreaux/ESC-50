@@ -1,6 +1,5 @@
 import numpy as np
 import random
-import chainer.functions as F
 from os.path import join
 
 
@@ -137,6 +136,7 @@ def mix(sound1, sound2, r, fs):
 
 
 def kl_divergence(y, t):
+    '''Wont work with keras'''
     entropy = - F.sum(t[t.data.nonzero()] * F.log(t[t.data.nonzero()]))
     crossEntropy = - F.sum(t * F.log_softmax(y))
 
