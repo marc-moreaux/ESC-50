@@ -2,3 +2,5 @@
 audio/*/
 .ipynb_checkpoints
 *.pyc
+*.vim
+
