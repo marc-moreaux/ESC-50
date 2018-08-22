@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import bc_utils as U
 import scipy.io.wavfile as sci_wav
-from random import shuffle
+import random
 import os
 
 
@@ -54,62 +54,112 @@ class ESC50(object):
                  folds=[1,2],
                  only_ESC10=False,
                  randomize=True,
-                 audio_rate=44100):
-        self.audio_rate = audio_rate
+                 audio_rate=44100,
+                 strongAugment=False,
+                 pad=0,
+                 inputLength=0,
+                 mix=False,
+                 normalize=False):
+        '''Initialize the generator
+
+        Parameters
+        ----------
+        only_ESC10: Bool
+            Wether to use ESC10 instead of ESC50
+        randomize: Bool
+            Randomize samples 
+        audio_rate: int
+            Audio rate of our samples
+        strongAugment: Bool 
+           rAndom scale and put gain in audio input 
+        pad: int
+            Add padding before and after audio signal
+        inputLength: float
+            Time in seconds of the audio input
+        normalize: int
+            Value used to normalize input
+        mix: Bool
+            Wether to mix samples or not (between classes learning)
+        '''
         self.csv_path = '../meta/esc50.csv'
         self.wav_dir = '../audio'
+        self.audio_rate = audio_rate
+        self.randomize = randomize
+        self.audio_rate = audio_rate
+        self.strongAugment = strongAugment
+        self.pad = pad 
+        self.inputLength = inputLength
+        self.normalize = normalize
+        self.mix = mix
+        self.n_classes = 50
+
         self.df = pd.read_csv(self.csv_path)
         self.df[self.df.fold.isin(folds)]
         if only_ESC10 is True:
             self.df[self.df['esc10']] 
+            self.n_classes = 10
+
+        self._preprocess_setup()
         self.data_gen = self._data_gen(randomize)
 
     def _data_gen(self, randomize=True):
         self.stop = False
         while not self.stop:
-            idxs = list(range(len(self.df)))
+            idxs1 = list(range(len(self.df)))
+            idxs2 = list(range(len(self.df)))
             if randomize is True:
-                shuffle(idxs)
+                random.shuffle(idxs1)
+                random.shuffle(idxs2)
 
-            for idx in idxs:
-                fname = self.df.filename[idx]
-                change_audio_rate(fname, self.wav_dir, self.audio_rate)
-                fpath = os.path.join(self.wav_dir, fname)
-                wav_freq, wav_data  = sci_wav.read(fpath)
-                wav_data = self.pre_process(wav_data)
-                yield wav_data, self.df.target[idx]
+            for idx1, idx2 in zip(idxs1, idxs2):
+                fname1 = self.df.filename[idx1]
+                fname2 = self.df.filename[idx2]
+                sound1 = self.fname_to_wav(fname1)
+                sound2 = self.fname_to_wav(fname2)
+                sound1 = self.preprocess(sound1)
+                sound2 = self.preprocess(sound2)
+                label1 = self.df.target[idx1]
+                label2 = self.df.target[idx2]
 
-    def _preprocess_setup(self,
-                          strongAugment=False,
-                          pad=0,
-                          inputLength=0,
-                          normalize=False):
-        """Apply desired pre_processing to the input
+                if self.mix:  # Mix two examples
+                    r = np.array(random.random())
+                    sound = U.mix(sound1, sound2, r, self.audio_rate).astype(np.float32)
+                    eye = np.eye(self.n_classes)
+                    label = (eye[label1] * r + eye[label2] * (1 - r)).astype(np.float32)
 
-        Parameters
-        ----------
-        strongAugment: Bool 
-           random scale and put gain in audio input 
-        pad:
-            add padding before and after audio signal
-        inputLength: float
-            time in seconds of the audio input
-        normalize: float
-            value used to normalize input
+                else:
+                    sound, label = sound1, label1
 
+                if self.strongAugment:
+                    sound = U.random_gain(6)(sound).astype(np.float32)
+
+                yield sound, label
+
+
+    def fname_to_wav(self, fname):
+        """Retrive wav data from fname
         """
-        funcs = []
-        if opt.strongAugment:
-            funcs.append(U.random_scale(1.25))
+        change_audio_rate(fname, self.wav_dir, self.audio_rate)
+        fpath = os.path.join(self.wav_dir, fname)
+        wav_freq, wav_data = sci_wav.read(fpath)
+        return wav_data
 
-        if opt.pad > 0:
-            funcs.append(U.padding(opt.pad))
+    def _preprocess_setup(self):
+        """Apply desired pre_processing to the input
+        """
+        self.preprocess_funcs = []
+        if self.strongAugment:
+            self.preprocess_funcs.append(U.random_scale(1.25))
+
+        if self.pad > 0:
+            self.preprocess_funcs.append(U.padding(self.pad))
         
-        if opt.inputLength > 0:
-            funcs.append(U.random_crop(opt.inputLength))
+        if self.inputLength > 0:
+            self.preprocess_funcs.append(U.random_crop(
+                int(self.inputLength * self.audio_rate)))
 
-        if opt.normalize is True:
-              U.normalize(32768.0),
+        if self.normalize is True:
+            self.preprocess_funcs.append(U.normalize(32768.0))
 
     def preprocess(self, audio):
         """Apply desired pre_processing to the input
@@ -119,7 +169,6 @@ class ESC50(object):
         audio: array 
             audio signal to be preprocess
         """
-
         for f in self.preprocess_funcs:
             audio = f(audio)
 
@@ -158,5 +207,39 @@ class ESC50(object):
 
 
 # Test
-train = ESC50(folds=[1,2,3], audio_rate=16000)
-next(train.data_gen)
+import matplotlib.pyplot as plt
+train = ESC50(folds=[1,2,3,4],
+              audio_rate=16000,
+              only_ESC10=False,
+              randomize=True,
+              strongAugment=True,
+              pad=0,
+              inputLength=1.5,
+              mix=True,
+              normalize=True)
+
+test = ESC50(folds=[5],
+             audio_rate=16000,
+             only_ESC10=False,
+             randomize=False,
+             strongAugment=True,
+             pad=0,
+             inputLength=1.5,
+             mix=False,
+             normalize=True)
+
+
+fig, axs = plt.subplots(5,1)
+for i in range(5):
+    sound, lbl = next(train.data_gen)
+    print(sound)
+    axs[i].plot(sound)
+
+fig, axs = plt.subplots(5,1)
+for i in range(5):
+    sound, lbl = next(test.data_gen)
+    print(sound)
+    axs[i].plot(sound)
+
+plt.show()
+
