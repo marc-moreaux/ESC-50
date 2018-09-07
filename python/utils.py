@@ -163,6 +163,7 @@ class ESC50(object):
                     sounds[i] = sound
                     labels[i] = label
 
+            sounds.reshape
             yield (sounds, labels)
 
     def fname_to_wav(self, fname):
