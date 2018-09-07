@@ -58,6 +58,7 @@ class ESC50(object):
                  strongAugment=False,
                  pad=0,
                  inputLength=0,
+                 random_crop=False,
                  mix=False,
                  normalize=False):
         '''Initialize the generator
@@ -76,6 +77,8 @@ class ESC50(object):
             Add padding before and after audio signal
         inputLength: float
             Time in seconds of the audio input
+        random_crop: Bool
+            Perform random crops
         normalize: int
             Value used to normalize input
         mix: Bool
@@ -89,6 +92,7 @@ class ESC50(object):
         self.strongAugment = strongAugment
         self.pad = pad 
         self.inputLength = inputLength
+        self.random_crop = random_crop
         self.normalize = normalize
         self.mix = mix
         self.n_classes = 50
@@ -96,18 +100,18 @@ class ESC50(object):
         self.df = pd.read_csv(self.csv_path)
         self.df[self.df.fold.isin(folds)]
         if only_ESC10 is True:
-            self.df[self.df['esc10']] 
+            self.df = self.df[self.df['esc10']] 
             self.n_classes = 10
 
         self._preprocess_setup()
-        self.data_gen = self._data_gen(randomize)
+        self.data_gen = self._data_gen()
 
-    def _data_gen(self, randomize=True):
+    def _data_gen(self):
         self.stop = False
         while not self.stop:
-            idxs1 = list(range(len(self.df)))
-            idxs2 = list(range(len(self.df)))
-            if randomize is True:
+            idxs1 = list(self.df.index)
+            idxs2 = list(self.df.index)
+            if self.randomize:
                 random.shuffle(idxs1)
                 random.shuffle(idxs2)
 
@@ -120,6 +124,10 @@ class ESC50(object):
                 sound2 = self.preprocess(sound2)
                 label1 = self.df.target[idx1]
                 label2 = self.df.target[idx2]
+                if self.n_classes == 10:
+                    lbl_indexes = [0, 1, 10, 11, 12, 20, 21, 38, 40, 41]
+                    label1 = lbl_indexes.index(label1)
+                    label2 = lbl_indexes.index(label2)
 
                 if self.mix:  # Mix two examples
                     r = np.array(random.random())
@@ -135,12 +143,33 @@ class ESC50(object):
 
                 yield sound, label
 
+    def batch_gen(self, batch_size):
+        '''Generator yielding batches
+        '''
+        self.stop = False
+        sounds = None
+        labels = None
+        data = self._data_gen()
+        while not self.stop:
+            for i in range(batch_size):
+                if sounds is None:  # Initialize batch size
+                    sound, label = next(data)
+                    sounds = np.ndarray((batch_size,) + sound.shape)
+                    sounds[0] = sound
+                    labels = np.ndarray((batch_size,) + label.shape)
+                    labels[0] = label
+                else:
+                    sound, label = next(data)
+                    sounds[i] = sound
+                    labels[i] = label
+
+            yield (sounds, labels)
 
     def fname_to_wav(self, fname):
         """Retrive wav data from fname
         """
         change_audio_rate(fname, self.wav_dir, self.audio_rate)
-        fpath = os.path.join(self.wav_dir, fname)
+        fpath = os.path.join(self.wav_dir, str(self.audio_rate), fname)
         wav_freq, wav_data = sci_wav.read(fpath)
         return wav_data
 
@@ -154,9 +183,9 @@ class ESC50(object):
         if self.pad > 0:
             self.preprocess_funcs.append(U.padding(self.pad))
         
-        if self.inputLength > 0:
-            self.preprocess_funcs.append(U.random_crop(
-                int(self.inputLength * self.audio_rate)))
+        if self.random_crop:
+            self.preprocess_funcs.append(
+                U.random_crop(int(self.inputLength * self.audio_rate)))
 
         if self.normalize is True:
             self.preprocess_funcs.append(U.normalize(32768.0))
@@ -205,41 +234,56 @@ class ESC50(object):
         return sound, label
 
 
+def get_train_test(test_split=1, only_ESC10=False):
+    '''return train and test depending on desired split
+    '''
+    train_splits = list(range(1,6))
+    train_splits.remove(test_split)
 
-# Test
-import matplotlib.pyplot as plt
-train = ESC50(folds=[1,2,3,4],
-              audio_rate=16000,
-              only_ESC10=False,
-              randomize=True,
-              strongAugment=True,
-              pad=0,
-              inputLength=1.5,
-              mix=True,
-              normalize=True)
+    train = ESC50(folds=train_splits,
+                  audio_rate=16000,
+                  only_ESC10=only_ESC10,
+                  randomize=True,
+                  strongAugment=True,
+                  random_crop=True,
+                  pad=0,
+                  inputLength=2,
+                  mix=True,
+                  normalize=True)
 
-test = ESC50(folds=[5],
-             audio_rate=16000,
-             only_ESC10=False,
-             randomize=False,
-             strongAugment=True,
-             pad=0,
-             inputLength=1.5,
-             mix=False,
-             normalize=True)
+    test = ESC50(folds=[test_split],
+                 audio_rate=16000,
+                 only_ESC10=only_ESC10,
+                 randomize=False,
+                 strongAugment=False,
+                 random_crop=False,
+                 pad=0,
+                 inputLength=4,
+                 mix=False,
+                 normalize=True)
+    
+    return train, test
 
 
-fig, axs = plt.subplots(5,1)
-for i in range(5):
-    sound, lbl = next(train.data_gen)
-    print(sound)
-    axs[i].plot(sound)
+def test_plot_audio():
+    '''Show a train and test split
+    '''
+    import matplotlib.pyplot as plt
+    train, test = get_train_test(test_split=1)
 
-fig, axs = plt.subplots(5,1)
-for i in range(5):
-    sound, lbl = next(test.data_gen)
-    print(sound)
-    axs[i].plot(sound)
+    fig, axs = plt.subplots(10,1)
+    for i in range(10):
+        sound, lbl = next(train.data_gen)
+        print(sound)
+        axs[i].plot(sound)
 
-plt.show()
+    fig, axs = plt.subplots(10,1)
+    for i in range(10):
+        sound, lbl = next(test.data_gen)
+        print(sound)
+        axs[i].plot(sound)
+
+    plt.show()
+
+
 
