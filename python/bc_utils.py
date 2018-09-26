@@ -1,6 +1,36 @@
+from os.path import join
 import numpy as np
 import random
-from os.path import join
+import os
+
+
+# Standardize audio
+def change_audio_rate(audio_fname, directory, new_audio_rate):
+    '''If the desired file doesn't exist, calls ffmpeg to change the sample rate
+    of an audio file.
+    eg : change_audio_rate('audio.wav', '/tmp/', 16000)
+
+    Parameters
+    ----------
+    audio_fname : str
+        name of the audio file
+    directory : str
+        Directory where the audio is stored
+    new_audio_rate : int
+        Desired sample rate
+    '''
+    import subprocess
+    new_directory = os.path.join(directory, str(new_audio_rate))
+    wav_path_orig = os.path.join(directory, audio_fname)
+    wav_path_dest = os.path.join(new_directory, audio_fname)
+    if not os.path.isfile(wav_path_dest):
+        if not os.path.isdir(new_directory):
+            os.mkdir(new_directory)
+        cmd = 'ffmpeg -i {} -ar {} -b:a 16k -ac 1 {}'.format(
+            wav_path_orig,
+            new_audio_rate,
+            wav_path_dest)
+        subprocess.call(cmd, shell=True)
 
 
 # Default data augmentation
@@ -157,7 +187,3 @@ def to_hms(time):
 
 
 
-# y = chainer.Variable(cuda.to_gpu(np.array([[.1,.9,0],[.8,.2,0]])))
-# t = chainer.Variable(cuda.to_gpu(np.array([[0,1.,0],[1,0,0]])))
-
-# kl_divergence(y, t).data

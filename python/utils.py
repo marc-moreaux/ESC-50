@@ -1,37 +1,60 @@
+import scipy.io.wavfile as sci_wav
+import bc_utils as U
 import pandas as pd
 import numpy as np
-import bc_utils as U
-import scipy.io.wavfile as sci_wav
+import threading
 import random
 import os
 
 
-def change_audio_rate(audio_fname, directory, new_audio_rate):
-    '''If the desired file doesn't exist, calls ffmpeg to change the sample rate
-    of an audio file.
-    eg : change_audio_rate('audio.wav', '/tmp/', 16000)
+class threadsafe_iter:
+    """Takes an iterator/generator and makes it thread-safe by
+    serializing call to the `next` method of given iterator/generator.
+    """
+    def __init__(self, it):
+        self.it = it
+        self.lock = threading.Lock()
 
-    Parameters
-    ----------
-    audio_fname : str
-        name of the audio file
-    directory : str
-        Directory where the audio is stored
-    new_audio_rate : int
-        Desired sample rate
-    '''
-    import subprocess
-    new_directory = os.path.join(directory, str(new_audio_rate))
-    wav_path_orig = os.path.join(directory, audio_fname)
-    wav_path_dest = os.path.join(new_directory, audio_fname)
-    if not os.path.isfile(wav_path_dest):
-        if not os.path.isdir(new_directory):
-            os.mkdir(new_directory)
-        cmd = 'ffmpeg -i {} -ar {} -b:a 16k -ac 1 {}'.format(
-            wav_path_orig,
-            new_audio_rate,
-            wav_path_dest)
-        subprocess.call(cmd, shell=True)
+    def __iter__(self):
+        return self
+
+    def __next__(self):  # Py3
+        with self.lock:
+            return next(self.it)
+
+    def next(self):  # Py2
+        with self.lock:
+            return self.it.next()
+
+
+def threadsafe_generator(f):
+    """A decorator that takes a generator function and makes it thread-safe.
+    """
+    def g(*a, **kw):
+        return threadsafe_iter(f(*a, **kw))
+    return g
+
+
+## Example from Keras of a good generator
+## The method `__getitem__` should return a complete batch
+# Here, `x_set` is list of path to the images
+# and `y_set` are the associated classes.
+# class CIFAR10Sequence(Sequence):
+# 
+#     def __init__(self, x_set, y_set, batch_size):
+#         self.x, self.y = x_set, y_set
+#         self.batch_size = batch_size
+# 
+#     def __len__(self):
+#         return int(np.ceil(len(self.x) / float(self.batch_size)))
+# 
+#     def __getitem__(self, idx):
+#         batch_x = self.x[idx * self.batch_size:(idx + 1) * self.batch_size]
+#         batch_y = self.y[idx * self.batch_size:(idx + 1) * self.batch_size]
+# 
+#         return np.array([
+#             resize(imread(file_name), (200, 200))
+#                for file_name in batch_x]), np.array(batch_y)
 
 
 class ESC50(object):
@@ -51,8 +74,8 @@ class ESC50(object):
         Wether to use ESC10 instead of ESC50
     """
     def __init__(self,
-                 folds=[1,2],
                  only_ESC10=False,
+                 folds=[1,2],
                  randomize=True,
                  audio_rate=44100,
                  strongAugment=False,
@@ -143,6 +166,7 @@ class ESC50(object):
 
                 yield sound, label
 
+    @threadsafe_generator
     def batch_gen(self, batch_size):
         '''Generator yielding batches
         '''
@@ -169,7 +193,7 @@ class ESC50(object):
     def fname_to_wav(self, fname):
         """Retrive wav data from fname
         """
-        change_audio_rate(fname, self.wav_dir, self.audio_rate)
+        U.change_audio_rate(fname, self.wav_dir, self.audio_rate)
         fpath = os.path.join(self.wav_dir, str(self.audio_rate), fname)
         wav_freq, wav_data = sci_wav.read(fpath)
         return wav_data
@@ -241,27 +265,26 @@ def get_train_test(test_split=1, only_ESC10=False):
     train_splits = list(range(1,6))
     train_splits.remove(test_split)
 
+    shared_params = {'audio_rate': 16000,
+                     'only_ESC10': only_ESC10,
+                     'pad': 0,
+                     'normalize': True}
+
     train = ESC50(folds=train_splits,
-                  audio_rate=16000,
-                  only_ESC10=only_ESC10,
                   randomize=True,
                   strongAugment=True,
                   random_crop=True,
-                  pad=0,
                   inputLength=2,
                   mix=True,
-                  normalize=True)
+                  **shared_params)
 
     test = ESC50(folds=[test_split],
-                 audio_rate=16000,
-                 only_ESC10=only_ESC10,
                  randomize=False,
                  strongAugment=False,
                  random_crop=False,
-                 pad=0,
                  inputLength=4,
                  mix=False,
-                 normalize=True)
+                 **shared_params)
     
     return train, test
 
@@ -272,13 +295,13 @@ def test_plot_audio():
     import matplotlib.pyplot as plt
     train, test = get_train_test(test_split=1)
 
-    fig, axs = plt.subplots(10,1)
+    fig, axs = plt.subplots(10, 1)
     for i in range(10):
         sound, lbl = next(train.data_gen)
         print(sound)
         axs[i].plot(sound)
 
-    fig, axs = plt.subplots(10,1)
+    fig, axs = plt.subplots(10, 1)
     for i in range(10):
         sound, lbl = next(test.data_gen)
         print(sound)
@@ -287,4 +310,5 @@ def test_plot_audio():
     plt.show()
 
 
-
+if __name__ == '__main__':
+    test_plot_audio()
